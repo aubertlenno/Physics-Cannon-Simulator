@@ -50,8 +50,11 @@ plt.grid(True)
 axButton_launch = plt.subplot(gs[5, 4:])
 button_launch = Button(ax=axButton_launch, label="Fire", color=bg_color, hovercolor=hc_color)
 
-axButton_prev = plt.subplot(gs[4, 4:])
+axButton_prev = plt.subplot(gs[4, 4:6])
 button_prev = Button(ax=axButton_prev, label="Save track", color=bg_color, hovercolor=hc_color)
+
+axButton_load = plt.subplot(gs[4, 6:])
+button_load = Button(ax=axButton_load, label="Load track", color=bg_color, hovercolor=hc_color)
 
 # Sliders:
 axSlider_angle = plt.subplot(gs[1, :4])
