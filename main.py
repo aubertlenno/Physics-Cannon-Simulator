@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.widgets import Slider, Button, TextBox
+from matplotlib.animation import FuncAnimation
+from tkinter import messagebox as mbox
 
 # Colors:
 bg_color = "#cbc5b3"
@@ -17,7 +19,7 @@ fig.suptitle("CannonLab", fontsize=14, fontweight="bold")
 fig.canvas.manager.set_window_title("CannonLab")
 
 # Proportions:
-hs = [2/5, 2/25, 2/25, 2/25, 2/25, 2/25, 1/5]
+hs = [25/50, 3/50, 3/50, 3/50, 3/50, 3/50, 10/50]
 ws = [1/8, 1/8, 1/8, 1/8, 1/8, 1/8, 1/8, 1/8]
 
 gs = GridSpec(ncols=8, nrows=7, width_ratios=ws, height_ratios=hs, figure=fig)
@@ -101,4 +103,262 @@ textbox_cannon_m = TextBox(ax=axTextBox_cannon_m, label="M, kg", initial="100", 
                            hovercolor=hc_color)
 
 plt.subplots_adjust(hspace=1)
+
+# Functionality
+
+# Initial values and constants
+angle_grad = 45  # °
+efficiency = 30  # %
+gunpowder = 10  # g
+target_height, target_x, hit_y = 20, 450, 0  # m
+g = 9.8  # m/s^2
+x0, y0 = 0, 0  # starting point
+q = 3800  # J/g
+M = 100  # kg
+m = 5  # kg
+
+r_wheel = 0.3
+friction_coef = 0.45
+
+angle = 0
+initial_speed = 0
+time_interval = 0
+x_offset = 0
+y_offset = 0
+
+x_prev_data, y_prev_data = [], []
+
+show_prev_track = False
+hit_check = False
+
+def compute_x(t, track="bullet"):
+    global x_offset, angle, initial_speed, friction_coef, r_wheel, m, M, g
+
+    if track == "bullet":
+        return x_offset + np.cos(angle) * initial_speed * t
+    elif track == "cannon":
+        deceleration = compute_force(force="friction") / M
+        if np.cos(angle) * initial_speed * (m / M) > deceleration * t:
+            return x_offset - np.cos(angle) * initial_speed * (m / M) * t + deceleration * (t ** 2) / 2
+        else:
+            return x_offset - ((np.cos(angle) * initial_speed * (m / M)) ** 2) / (2 * deceleration)
+
+def compute_y(t, track="bullet"):
+    global y_offset, angle, initial_speed, g
+
+    if track == "bullet":
+        return y_offset + np.sin(angle) * initial_speed * t - g * (t ** 2) / 2
+    elif track == "cannon":
+        return y_offset
+
+def compute_force(mass="m", force="friction"):
+    global friction_coef, m, M, g, r_wheel
+
+    if force == "friction":
+        return friction_coef * M * g / r_wheel
+    elif force == "gravity":
+        if mass == "m":
+            return m * g
+        elif mass == "M":
+            return M * g
+
+def compute_impulse(t=0, track="bullet"):
+    global initial_speed, friction_coef, M, m, g
+
+    if track == "bullet":
+        return initial_speed * m
+    elif track == "cannon":
+        return max(0.0, initial_speed * m - compute_force(force="friction") * t)
+
+def clear_track():
+    global x_prev_data, y_prev_data
+
+    for line in ax.get_lines():
+        line.remove()
+
+    if show_prev_track:
+        ax.plot(x_prev_data, y_prev_data, "--", color=hc_color, lw=3)
+
+def update_config():
+    global angle, initial_speed, time_interval, x_offset, y_offset, target_height, target_x, hit_y
+
+    angle = angle_grad * np.pi / 180
+    initial_speed = np.sqrt((2 * efficiency * q * gunpowder) / (100 * m))
+    time_interval = (np.sin(angle) * initial_speed + np.sqrt(
+        (np.sin(angle) * initial_speed) ** 2 + 2 * g * y0)) / g
+    x_offset = x0
+    y_offset = y0
+
+    if compute_x(time_interval, track="bullet") >= target_x:
+        t_hit = (target_x - x_offset) / (np.cos(angle) * initial_speed)
+        hit_y = compute_y(t_hit, track="bullet")
+
+    return np.arange(0, time_interval, 0.1)
+
+def plot_target():
+    global target_x, target_height
+
+    ax.plot([target_x, target_x], [0, target_height], color=main_color_1, lw=3)
+
+def plot_bars():
+    global time_interval, initial_speed, angle
+
+    y_impulses_data = [compute_impulse(track="bullet"), compute_impulse(track="cannon"),
+                       compute_impulse(t=time_interval, track="cannon")]
+
+    idx = 0
+    for rect in impulse_bar:
+        rect.set_height(y_impulses_data[idx])
+        idx += 1
+
+    ax_impulses.relim()
+    ax_impulses.autoscale_view(scalex=True, scaley=True)
+
+    y_forces_data = [compute_force(force="friction"), compute_force(mass="M", force="gravity"),
+                     compute_force(mass="m", force="gravity")]
+
+    idx = 0
+    for rect in force_bar:
+        rect.set_height(y_forces_data[idx])
+        idx += 1
+
+    ax_forces.relim()
+    ax_forces.autoscale_view(scalex=True, scaley=True)
+
+    y_velocities_data = [initial_speed, np.cos(angle) * initial_speed, np.cos(angle) * initial_speed * (m / M)]
+
+    idx = 0
+    for rect in velocity_bar:
+        rect.set_height(y_velocities_data[idx])
+        idx += 1
+
+    ax_velocities.relim()
+    ax_velocities.autoscale_view(scalex=True, scaley=True)
+
+def run_animation():
+    global x_prev_data, y_prev_data
+
+    def update_track(t):
+        global target_x, target_height, hit_y, hit_check
+
+        x_bullet = compute_x(t, track="bullet")
+        y_bullet = compute_y(t, track="bullet")
+
+        x_cannon = compute_x(t, track="cannon")
+        y_cannon = compute_y(t, track="cannon")
+
+        if x_bullet not in x_data["bullet"]:
+            x_data["bullet"].append(x_bullet)
+            y_data["bullet"].append(y_bullet)
+
+            if target_x <= x_bullet and hit_y <= target_height and hit_check:
+                ax.plot([target_x], [hit_y], "o", mfc=main_color_2, mec=main_color_2, markersize=8)
+                hit_check = False
+
+            bullet_track.set_data(x_data["bullet"], y_data["bullet"])
+
+        if x_cannon not in x_data["cannon"]:
+            x_data["cannon"].append(x_cannon)
+            y_data["cannon"].append(y_cannon)
+
+            cannon_track.set_data(x_data["cannon"], y_data["cannon"])
+
+        ax.relim()
+        ax.autoscale_view(scalex=True, scaley=True)
+
+    bullet_track, = ax.plot([], [], color=main_color_2, lw=3)
+    cannon_track, = ax.plot([], [], color=main_color_1, lw=3)
+
+    x_data, y_data = {"cannon": [], "bullet": []}, {"cannon": [], "bullet": []}
+
+    x_prev_data = x_data["bullet"]
+    y_prev_data = y_data["bullet"]
+
+    FuncAnimation(fig, func=update_track, frames=update_config(), interval=20, blit=False)
+
+def launch(event):
+    global hit_check
+
+    hit_check = True
+    clear_track()
+    plot_target()
+    plot_bars()
+    run_animation()
+
+def update_prev(event):
+    global show_prev_track
+
+    if show_prev_track:
+        show_prev_track = False
+        button_prev.label.set_text("Save previous track")
+    else:
+        show_prev_track = True
+        button_prev.label.set_text("Omit previous track")
+
+def update_angle(val):
+    global angle_grad
+    angle_grad = slider_angle.val
+
+def update_gunpowder(val):
+    global gunpowder
+    gunpowder = slider_gunpowder.val
+
+def update_efficiency(val):
+    global efficiency
+    efficiency = slider_efficiency.val
+
+def check_format(label, positive_only=False):
+    try:
+        value = int(label)
+        if (not positive_only and value >= 0) or value > 0:
+            return True
+        else:
+            mbox.showerror("Cannon Firing Setup", "Incorrect measure format")
+            return False
+    except ValueError:
+        mbox.showerror("Cannon Firing Setup", "Incorrect measure format")
+        return False
+
+def update_x0(label):
+    global x0
+    if check_format(label):
+        x0 = int(label)
+
+def update_y0(label):
+    global y0
+    if check_format(label):
+        y0 = int(label)
+
+def update_target_x(label):
+    global target_x
+    if check_format(label):
+        target_x = int(label)
+
+def update_target_height(label):
+    global target_height
+    if check_format(label):
+        target_height = int(label)
+
+def update_bullet_m(label):
+    global m
+    if check_format(label, positive_only=True):
+        m = int(label)
+
+def update_cannon_m(label):
+    global M
+    if check_format(label, positive_only=True):
+        M = int(label)
+
+button_launch.on_clicked(launch)
+button_prev.on_clicked(update_prev)
+slider_angle.on_changed(update_angle)
+slider_gunpowder.on_changed(update_gunpowder)
+slider_efficiency.on_changed(update_efficiency)
+textbox_x_start.on_submit(update_x0)
+textbox_y_start.on_submit(update_y0)
+textbox_target_x.on_submit(update_target_x)
+textbox_target_height.on_submit(update_target_height)
+textbox_bullet_m.on_submit(update_bullet_m)
+textbox_cannon_m.on_submit(update_cannon_m)
+
 plt.show()
