@@ -9,8 +9,9 @@ from tkinter import messagebox as mbox
 # Colors:
 bg_color = "#cbc5b3"
 hc_color = "#cbc5b3"
-main_color_1 = "#8dd3c7"
+main_color_1 = "#71b1d0"
 main_color_2 = "#71b1d0"
+saved_color = "#ff7f0e"  # Color for saved trajectories
 
 plt.style.use('Solarize_Light2')
 
@@ -20,33 +21,33 @@ fig.suptitle("CannonLab", fontsize=14, fontweight="bold")
 fig.canvas.manager.set_window_title("CannonLab")
 
 # Proportions:
-hs = [25/50, 3/50, 3/50, 3/50, 3/50, 3/50, 10/50]
+hs = [15/50, 15/50, 5/50, 5/50, 5/50, 5/50]  # Adjusted to make top bars taller
 ws = [1/8, 1/8, 1/8, 1/8, 1/8, 1/8, 1/8, 1/8]
 
-gs = GridSpec(ncols=8, nrows=7, width_ratios=ws, height_ratios=hs, figure=fig)
+gs = GridSpec(ncols=8, nrows=6, width_ratios=ws, height_ratios=hs, figure=fig)
 
-# Main plane:
-ax = plt.subplot(gs[0, :8], facecolor=bg_color)
-ax.set_aspect("auto")
-
-plt.xlabel("x, m")
-plt.ylabel("y, m")
-plt.grid(True)
-
-# Bars:
-ax_impulses = plt.subplot(gs[6, :3], facecolor=bg_color)
+# Top Bars:
+ax_impulses = plt.subplot(gs[0, :3], facecolor=bg_color)
 impulse_bar = ax_impulses.bar(["Projectile", "Cannon (1)", "Cannon (2)"], [0, 0, 0], color=main_color_1)
 plt.xlabel("Impulses, kg*m/s")
 plt.grid(True)
 
-ax_forces = plt.subplot(gs[6, 3:6], facecolor=bg_color)
+ax_forces = plt.subplot(gs[0, 3:6], facecolor=bg_color)
 force_bar = ax_forces.bar(["Friction C", "Reaction C", "Gravity P"], [0, 0, 0], color=main_color_1)
 plt.xlabel("Forces, N")
 plt.grid(True)
 
-ax_velocities = plt.subplot(gs[6, 6:], facecolor=bg_color)
+ax_velocities = plt.subplot(gs[0, 6:], facecolor=bg_color)
 velocity_bar = ax_velocities.bar(["Initial P", "X-coordinate P", "Initial C"], [0, 0, 0], color=main_color_1)
 plt.xlabel("Velocities, m/s")
+plt.grid(True)
+
+# Main plane:
+ax = plt.subplot(gs[1:, :], facecolor=bg_color)
+ax.set_aspect("auto")
+
+plt.xlabel("x, m")
+plt.ylabel("y, m")
 plt.grid(True)
 
 def add_value_labels(ax, bars):
@@ -174,8 +175,9 @@ def clear_track():
     for line in ax.get_lines():
         line.remove()
 
+    # Re-plot saved trajectories with a distinct color and style
     for traj in trajectories:
-        ax.plot(traj['x'], traj['y'], "--", color=hc_color, lw=3)
+        ax.plot(traj['x'], traj['y'], "--", color=saved_color, lw=2)
 
 def update_config():
     global angle, initial_speed, time_interval, x_offset, y_offset, target_height, target_x, hit_y
@@ -220,6 +222,11 @@ def plot_bars():
     add_value_labels(ax_impulses, impulse_bar)
     add_value_labels(ax_forces, force_bar)
     add_value_labels(ax_velocities, velocity_bar)
+
+def stop_animation():
+    global anim
+    if anim:
+        anim.event_source.stop()
 
 def run_animation():
     global x_prev_data, y_prev_data, anim
@@ -267,8 +274,9 @@ def run_animation():
 def launch(event):
     global hit_check
 
+    stop_animation()  # Stop any existing animation
     hit_check = True
-    clear_track()
+    clear_track()  # This will now re-plot saved trajectories
     plot_target()
     plot_bars()
     run_animation()
@@ -276,18 +284,21 @@ def launch(event):
 
 def save_trajectory(event):
     global x_prev_data, y_prev_data, trajectories
+    stop_animation()  # Stop any existing animation
     if x_prev_data and y_prev_data:
         trajectories.append({"x": x_prev_data.copy(), "y": y_prev_data.copy()})
         plt.draw()
 
 def clear_trajectories(event):
     global trajectories
+    stop_animation()  # Stop any existing animation
     trajectories.clear()
     clear_track()
     plt.draw()
 
 def toggle_air_resistance(event):
     global apply_air_resistance
+    stop_animation()  # Stop any existing animation
     apply_air_resistance = not apply_air_resistance
     if apply_air_resistance:
         button_toggle_air_resistance.label.set_text("Air Resistance: ON")
@@ -296,6 +307,8 @@ def toggle_air_resistance(event):
     plt.draw()
 
 def open_modal():
+    stop_animation()  # Stop any existing animation
+
     def on_submit():
         global angle_grad, gunpowder, efficiency, x0, y0, target_x, target_height, m, M
         try:

@@ -1,16 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.widgets import Button
+from matplotlib.widgets import Slider, Button, TextBox
 from matplotlib.animation import FuncAnimation
 import tkinter as tk
-from tkinter import simpledialog, messagebox as mbox
+from tkinter import messagebox as mbox
 
 # Colors:
 bg_color = "#cbc5b3"
 hc_color = "#cbc5b3"
-main_color_1 = "#8dd3c7"
+main_color_1 = "#71b1d0"
 main_color_2 = "#71b1d0"
+saved_color = "#ff7f0e"  # Color for saved trajectories
 
 plt.style.use('Solarize_Light2')
 
@@ -20,35 +21,34 @@ fig.suptitle("CannonLab", fontsize=14, fontweight="bold")
 fig.canvas.manager.set_window_title("CannonLab")
 
 # Proportions:
-hs = [35/50, 15/50]
-ws = [1]
+hs = [15/50, 15/50, 5/50, 5/50, 5/50, 5/50]  # Adjusted to make top bars taller
+ws = [1/8, 1/8, 1/8, 1/8, 1/8, 1/8, 1/8, 1/8]
 
-gs = GridSpec(ncols=1, nrows=2, width_ratios=ws, height_ratios=hs, figure=fig)
+gs = GridSpec(ncols=8, nrows=6, width_ratios=ws, height_ratios=hs, figure=fig)
+
+# Top Bars:
+ax_impulses = plt.subplot(gs[0, :3], facecolor=bg_color)
+impulse_bar = ax_impulses.bar(["Projectile", "Cannon (1)", "Cannon (2)"], [0, 0, 0], color=main_color_1)
+plt.xlabel("Impulses, kg*m/s")
+plt.grid(True)
+
+ax_forces = plt.subplot(gs[0, 3:6], facecolor=bg_color)
+force_bar = ax_forces.bar(["Friction C", "Reaction C", "Gravity P"], [0, 0, 0], color=main_color_1)
+plt.xlabel("Forces, N")
+plt.grid(True)
+
+ax_velocities = plt.subplot(gs[0, 6:], facecolor=bg_color)
+velocity_bar = ax_velocities.bar(["Initial P", "X-coordinate P", "Initial C"], [0, 0, 0], color=main_color_1)
+plt.xlabel("Velocities, m/s")
+plt.grid(True)
 
 # Main plane:
-ax = plt.subplot(gs[0, :], facecolor=bg_color)
+ax = plt.subplot(gs[1:, :], facecolor=bg_color)
 ax.set_aspect("auto")
 
 plt.xlabel("x, m")
 plt.ylabel("y, m")
 plt.grid(True)
-
-# Bars:
-gs_bars = GridSpec(ncols=9, nrows=1, figure=fig, left=0.05, right=0.95, bottom=0.05, top=0.2, wspace=0.3)
-ax_impulses = plt.subplot(gs_bars[0, :3], facecolor=bg_color)
-impulse_bar = ax_impulses.bar(["Projectile", "Cannon (1)", "Cannon (2)"], [0, 0, 0], color=main_color_1)
-ax_impulses.set_xlabel("Impulses, kg*m/s")
-ax_impulses.grid(True)
-
-ax_forces = plt.subplot(gs_bars[0, 3:6], facecolor=bg_color)
-force_bar = ax_forces.bar(["Friction C", "Reaction C", "Gravity P"], [0, 0, 0], color=main_color_1)
-ax_forces.set_xlabel("Forces, N")
-ax_forces.grid(True)
-
-ax_velocities = plt.subplot(gs_bars[0, 6:], facecolor=bg_color)
-velocity_bar = ax_velocities.bar(["Initial P", "X-coordinate P", "Initial C"], [0, 0, 0], color=main_color_1)
-ax_velocities.set_xlabel("Velocities, m/s")
-ax_velocities.grid(True)
 
 def add_value_labels(ax, bars):
     for bar in bars:
@@ -83,6 +83,9 @@ air_density = 1.225  # kg/m^3
 drag_coefficient = 0.47  # dimensionless, spherical projectile
 cross_sectional_area = 0.05  # m^2, example value
 
+# Control for air resistance
+apply_air_resistance = True
+
 angle = 0
 initial_speed = 0
 time_interval = 0
@@ -94,15 +97,47 @@ x_prev_data, y_prev_data = [], []
 show_prev_track = False
 hit_check = False
 
+# To store multiple trajectories
+trajectories = []
+
+anim = None  # Ensuring the animation object is not deleted
+
 def compute_drag_force(v):
     return 0.5 * air_density * v**2 * drag_coefficient * cross_sectional_area
 
-def compute_x(t, track="bullet"):
-    global x_offset, angle, initial_speed, friction_coef, r_wheel, m, M, g
+def compute_position_with_drag(t):
+    global x_offset, y_offset, angle, initial_speed, m, g
 
+    dt = 0.1  # time step
+    x, y = x_offset, y_offset
+    vx, vy = initial_speed * np.cos(angle), initial_speed * np.sin(angle)
+
+    for _ in np.arange(0, t, dt):
+        v = np.sqrt(vx**2 + vy**2)
+        if apply_air_resistance:
+            drag_force = compute_drag_force(v)
+            ax_drag = drag_force * (vx / v) / m
+            ay_drag = drag_force * (vy / v) / m
+        else:
+            ax_drag = ay_drag = 0
+
+        vx -= ax_drag * dt
+        vy -= (g + ay_drag) * dt
+
+        x += vx * dt
+        y += vy * dt
+
+        if y < 0:
+            break
+
+    return x, y
+
+def compute_x(t, track="bullet"):
     if track == "bullet":
-        return x_offset + np.cos(angle) * initial_speed * t
+        x, _ = compute_position_with_drag(t)
+        return x
     elif track == "cannon":
+        global x_offset, angle, initial_speed, friction_coef, r_wheel, m, M, g
         deceleration = compute_force(force="friction") / M
         if np.cos(angle) * initial_speed * (m / M) > deceleration * t:
             return x_offset - np.cos(angle) * initial_speed * (m / M) * t + deceleration * (t ** 2) / 2
@@ -110,11 +145,11 @@ def compute_x(t, track="bullet"):
             return x_offset - ((np.cos(angle) * initial_speed * (m / M)) ** 2) / (2 * deceleration)
 
 def compute_y(t, track="bullet"):
-    global y_offset, angle, initial_speed, g
-
     if track == "bullet":
-        return y_offset + np.sin(angle) * initial_speed * t - g * (t ** 2) / 2
+        _, y = compute_position_with_drag(t)
+        return y
     elif track == "cannon":
+        global y_offset
         return y_offset
 
 def compute_force(mass="m", force="friction"):
@@ -137,13 +172,12 @@ def compute_impulse(t=0, track="bullet"):
         return max(0.0, initial_speed * m - compute_force(force="friction") * t)
 
 def clear_track():
-    global x_prev_data, y_prev_data
-
     for line in ax.get_lines():
         line.remove()
 
-    if show_prev_track:
-        ax.plot(x_prev_data, y_prev_data, "--", color=hc_color, lw=3)
+    # Re-plot saved trajectories with a distinct color and style
+    for traj in trajectories:
+        ax.plot(traj['x'], traj['y'], "--", color=saved_color, lw=2)
 
 def update_config():
     global angle, initial_speed, time_interval, x_offset, y_offset, target_height, target_x, hit_y
@@ -189,9 +223,15 @@ def plot_bars():
     add_value_labels(ax_forces, force_bar)
     add_value_labels(ax_velocities, velocity_bar)
 
-global anim  # Ensuring the animation object is not deleted
+def stop_animation():
+    global anim
+    if anim:
+        anim.event_source.stop()
+
 def run_animation():
     global x_prev_data, y_prev_data, anim
+
+    current_trajectory_x, current_trajectory_y = [], []  # Reset current trajectory
 
     def update_track(t):
         global target_x, target_height, hit_y, hit_check
@@ -202,15 +242,15 @@ def run_animation():
         x_cannon = compute_x(t, track="cannon")
         y_cannon = compute_y(t, track="cannon")
 
-        if x_bullet not in x_data["bullet"]:
-            x_data["bullet"].append(x_bullet)
-            y_data["bullet"].append(y_bullet)
+        if x_bullet not in current_trajectory_x:
+            current_trajectory_x.append(x_bullet)
+            current_trajectory_y.append(y_bullet)
 
             if target_x <= x_bullet and hit_y <= target_height and hit_check:
                 ax.plot([target_x], [hit_y], "o", mfc=main_color_2, mec=main_color_2, markersize=8)
                 hit_check = False
 
-            bullet_track.set_data(x_data["bullet"], y_data["bullet"])
+            bullet_track.set_data(current_trajectory_x, current_trajectory_y)
 
         if x_cannon not in x_data["cannon"]:
             x_data["cannon"].append(x_cannon)
@@ -226,31 +266,49 @@ def run_animation():
 
     x_data, y_data = {"cannon": [], "bullet": []}, {"cannon": [], "bullet": []}
 
-    x_prev_data = x_data["bullet"]
-    y_prev_data = y_data["bullet"]
+    x_prev_data = current_trajectory_x
+    y_prev_data = current_trajectory_y
 
     anim = FuncAnimation(fig, func=update_track, frames=update_config(), interval=20, blit=False)
 
 def launch(event):
     global hit_check
 
+    stop_animation()  # Stop any existing animation
     hit_check = True
-    clear_track()
+    clear_track()  # This will now re-plot saved trajectories
     plot_target()
     plot_bars()
     run_animation()
+    plt.draw()  # Ensure the plot is updated
 
-def update_prev(event):
-    global show_prev_track
+def save_trajectory(event):
+    global x_prev_data, y_prev_data, trajectories
+    stop_animation()  # Stop any existing animation
+    if x_prev_data and y_prev_data:
+        trajectories.append({"x": x_prev_data.copy(), "y": y_prev_data.copy()})
+        plt.draw()
 
-    if show_prev_track:
-        show_prev_track = False
-        button_prev.label.set_text("Save previous track")
+def clear_trajectories(event):
+    global trajectories
+    stop_animation()  # Stop any existing animation
+    trajectories.clear()
+    clear_track()
+    plt.draw()
+
+def toggle_air_resistance(event):
+    global apply_air_resistance
+    stop_animation()  # Stop any existing animation
+    apply_air_resistance = not apply_air_resistance
+    if apply_air_resistance:
+        button_toggle_air_resistance.label.set_text("Air Resistance: ON")
     else:
-        show_prev_track = True
-        button_prev.label.set_text("Omit previous track")
+        button_toggle_air_resistance.label.set_text("Air Resistance: OFF")
+    plt.draw()
 
 def open_modal():
+    stop_animation()  # Stop any existing animation
+
     def on_submit():
         global angle_grad, gunpowder, efficiency, x0, y0, target_x, target_height, m, M
         try:
@@ -328,9 +386,17 @@ axButton_launch = plt.axes([0.8, 0.02, 0.1, 0.04])
 button_launch = Button(axButton_launch, 'Fire')
 button_launch.on_clicked(launch)
 
-axButton_prev = plt.axes([0.6, 0.02, 0.1, 0.04])
-button_prev = Button(axButton_prev, 'Save track')
-button_prev.on_clicked(update_prev)
+axButton_save_trajectory = plt.axes([0.4, 0.02, 0.1, 0.04])
+button_save_trajectory = Button(axButton_save_trajectory, 'Save Shot')
+button_save_trajectory.on_clicked(save_trajectory)
+
+axButton_clear_trajectories = plt.axes([0.3, 0.02, 0.1, 0.04])
+button_clear_trajectories = Button(axButton_clear_trajectories, 'Clear Shots')
+button_clear_trajectories.on_clicked(clear_trajectories)
+
+axButton_toggle_air_resistance = plt.axes([0.5, 0.02, 0.1, 0.04])
+button_toggle_air_resistance = Button(axButton_toggle_air_resistance, 'Air Resistance: ON')
+button_toggle_air_resistance.on_clicked(toggle_air_resistance)
 
 plt.subplots_adjust(hspace=1)
 plt.show()
