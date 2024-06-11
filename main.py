@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.widgets import Slider, Button, TextBox
 from matplotlib.animation import FuncAnimation
+import tkinter as tk
 from tkinter import messagebox as mbox
 
 # Colors:
@@ -76,6 +77,14 @@ m = 5  # kg
 r_wheel = 0.3
 friction_coef = 0.45
 
+# Air resistance parameters
+air_density = 1.225  # kg/m^3
+drag_coefficient = 0.47  # dimensionless, spherical projectile
+cross_sectional_area = 0.05  # m^2, example value
+
+# Control for air resistance
+apply_air_resistance = True
+
 angle = 0
 initial_speed = 0
 time_interval = 0
@@ -87,12 +96,47 @@ x_prev_data, y_prev_data = [], []
 show_prev_track = False
 hit_check = False
 
-def compute_x(t, track="bullet"):
-    global x_offset, angle, initial_speed, friction_coef, r_wheel, m, M, g
+# To store multiple trajectories
+trajectories = []
 
+anim = None  # Ensuring the animation object is not deleted
+
+def compute_drag_force(v):
+    return 0.5 * air_density * v**2 * drag_coefficient * cross_sectional_area
+
+def compute_position_with_drag(t):
+    global x_offset, y_offset, angle, initial_speed, m, g
+
+    dt = 0.1  # time step
+    x, y = x_offset, y_offset
+    vx, vy = initial_speed * np.cos(angle), initial_speed * np.sin(angle)
+
+    for _ in np.arange(0, t, dt):
+        v = np.sqrt(vx**2 + vy**2)
+        if apply_air_resistance:
+            drag_force = compute_drag_force(v)
+            ax_drag = drag_force * (vx / v) / m
+            ay_drag = drag_force * (vy / v) / m
+        else:
+            ax_drag = ay_drag = 0
+
+        vx -= ax_drag * dt
+        vy -= (g + ay_drag) * dt
+
+        x += vx * dt
+        y += vy * dt
+
+        if y < 0:
+            break
+
+    return x, y
+
+def compute_x(t, track="bullet"):
     if track == "bullet":
-        return x_offset + np.cos(angle) * initial_speed * t
+        x, _ = compute_position_with_drag(t)
+        return x
     elif track == "cannon":
+        global x_offset, angle, initial_speed, friction_coef, r_wheel, m, M, g
         deceleration = compute_force(force="friction") / M
         if np.cos(angle) * initial_speed * (m / M) > deceleration * t:
             return x_offset - np.cos(angle) * initial_speed * (m / M) * t + deceleration * (t ** 2) / 2
@@ -100,11 +144,11 @@ def compute_x(t, track="bullet"):
             return x_offset - ((np.cos(angle) * initial_speed * (m / M)) ** 2) / (2 * deceleration)
 
 def compute_y(t, track="bullet"):
-    global y_offset, angle, initial_speed, g
-
     if track == "bullet":
-        return y_offset + np.sin(angle) * initial_speed * t - g * (t ** 2) / 2
+        _, y = compute_position_with_drag(t)
+        return y
     elif track == "cannon":
+        global y_offset
         return y_offset
 
 def compute_force(mass="m", force="friction"):
@@ -127,13 +171,11 @@ def compute_impulse(t=0, track="bullet"):
         return max(0.0, initial_speed * m - compute_force(force="friction") * t)
 
 def clear_track():
-    global x_prev_data, y_prev_data
-
     for line in ax.get_lines():
         line.remove()
 
-    if show_prev_track:
-        ax.plot(x_prev_data, y_prev_data, "--", color=hc_color, lw=3)
+    for traj in trajectories:
+        ax.plot(traj['x'], traj['y'], "--", color=hc_color, lw=3)
 
 def update_config():
     global angle, initial_speed, time_interval, x_offset, y_offset, target_height, target_x, hit_y
@@ -179,9 +221,10 @@ def plot_bars():
     add_value_labels(ax_forces, force_bar)
     add_value_labels(ax_velocities, velocity_bar)
 
-global anim  # Ensuring the animation object is not deleted
 def run_animation():
     global x_prev_data, y_prev_data, anim
+
+    current_trajectory_x, current_trajectory_y = [], []  # Reset current trajectory
 
     def update_track(t):
         global target_x, target_height, hit_y, hit_check
@@ -192,15 +235,15 @@ def run_animation():
         x_cannon = compute_x(t, track="cannon")
         y_cannon = compute_y(t, track="cannon")
 
-        if x_bullet not in x_data["bullet"]:
-            x_data["bullet"].append(x_bullet)
-            y_data["bullet"].append(y_bullet)
+        if x_bullet not in current_trajectory_x:
+            current_trajectory_x.append(x_bullet)
+            current_trajectory_y.append(y_bullet)
 
             if target_x <= x_bullet and hit_y <= target_height and hit_check:
                 ax.plot([target_x], [hit_y], "o", mfc=main_color_2, mec=main_color_2, markersize=8)
                 hit_check = False
 
-            bullet_track.set_data(x_data["bullet"], y_data["bullet"])
+            bullet_track.set_data(current_trajectory_x, current_trajectory_y)
 
         if x_cannon not in x_data["cannon"]:
             x_data["cannon"].append(x_cannon)
@@ -216,8 +259,8 @@ def run_animation():
 
     x_data, y_data = {"cannon": [], "bullet": []}, {"cannon": [], "bullet": []}
 
-    x_prev_data = x_data["bullet"]
-    y_prev_data = y_data["bullet"]
+    x_prev_data = current_trajectory_x
+    y_prev_data = current_trajectory_y
 
     anim = FuncAnimation(fig, func=update_track, frames=update_config(), interval=20, blit=False)
 
@@ -229,138 +272,118 @@ def launch(event):
     plot_target()
     plot_bars()
     run_animation()
+    plt.draw()  # Ensure the plot is updated
 
-def update_prev(event):
-    global show_prev_track
+def save_trajectory(event):
+    global x_prev_data, y_prev_data, trajectories
+    if x_prev_data and y_prev_data:
+        trajectories.append({"x": x_prev_data.copy(), "y": y_prev_data.copy()})
+        plt.draw()
 
-    if show_prev_track:
-        show_prev_track = False
-        button_prev.label.set_text("Save previous track")
+def clear_trajectories(event):
+    global trajectories
+    trajectories.clear()
+    clear_track()
+    plt.draw()
+
+def toggle_air_resistance(event):
+    global apply_air_resistance
+    apply_air_resistance = not apply_air_resistance
+    if apply_air_resistance:
+        button_toggle_air_resistance.label.set_text("Air Resistance: ON")
     else:
-        show_prev_track = True
-        button_prev.label.set_text("Omit previous track")
+        button_toggle_air_resistance.label.set_text("Air Resistance: OFF")
+    plt.draw()
 
-def update_angle(val):
-    global angle_grad
-    angle_grad = slider_angle.val
-
-def update_gunpowder(val):
-    global gunpowder
-    gunpowder = slider_gunpowder.val
-
-def update_efficiency(val):
-    global efficiency
-    efficiency = slider_efficiency.val
-
-def check_format(label, positive_only=False):
-    try:
-        value = int(label)
-        if (not positive_only and value >= 0) or value > 0:
-            return True
-        else:
+def open_modal():
+    def on_submit():
+        global angle_grad, gunpowder, efficiency, x0, y0, target_x, target_height, m, M
+        try:
+            angle_grad = int(entry_angle.get())
+            gunpowder = int(entry_gunpowder.get())
+            efficiency = int(entry_efficiency.get())
+            x0 = int(entry_x0.get())
+            y0 = int(entry_y0.get())
+            target_x = int(entry_target_x.get())
+            target_height = int(entry_target_height.get())
+            m = int(entry_m.get())
+            M = int(entry_M.get())
+        except ValueError:
             mbox.showerror("Cannon Firing Setup", "Incorrect measure format")
-            return False
-    except ValueError:
-        mbox.showerror("Cannon Firing Setup", "Incorrect measure format")
-        return False
+        modal.destroy()
 
-def update_x0(label):
-    global x0
-    if check_format(label):
-        x0 = int(label)
+    modal = tk.Toplevel(root)
+    modal.title("Input Parameters")
 
-def update_y0(label):
-    global y0
-    if check_format(label):
-        y0 = int(label)
+    tk.Label(modal, text="Angle, °").grid(row=0, column=0)
+    entry_angle = tk.Entry(modal)
+    entry_angle.insert(0, angle_grad)
+    entry_angle.grid(row=0, column=1)
 
-def update_target_x(label):
-    global target_x
-    if check_format(label):
-        target_x = int(label)
+    tk.Label(modal, text="Gunpowder, g").grid(row=1, column=0)
+    entry_gunpowder = tk.Entry(modal)
+    entry_gunpowder.insert(0, gunpowder)
+    entry_gunpowder.grid(row=1, column=1)
 
-def update_target_height(label):
-    global target_height
-    if check_format(label):
-        target_height = int(label)
+    tk.Label(modal, text="Efficiency, %").grid(row=2, column=0)
+    entry_efficiency = tk.Entry(modal)
+    entry_efficiency.insert(0, efficiency)
+    entry_efficiency.grid(row=2, column=1)
 
-def update_bullet_m(label):
-    global m
-    if check_format(label, positive_only=True):
-        m = int(label)
+    tk.Label(modal, text="Starting point X, m").grid(row=3, column=0)
+    entry_x0 = tk.Entry(modal)
+    entry_x0.insert(0, x0)
+    entry_x0.grid(row=3, column=1)
 
-def update_cannon_m(label):
-    global M
-    if check_format(label, positive_only=True):
-        M = int(label)
+    tk.Label(modal, text="Starting point Y, m").grid(row=4, column=0)
+    entry_y0 = tk.Entry(modal)
+    entry_y0.insert(0, y0)
+    entry_y0.grid(row=4, column=1)
 
-# Buttons:
-axButton_launch = plt.subplot(gs[5, 4:])
-button_launch = Button(ax=axButton_launch, label="Fire", color=bg_color, hovercolor=hc_color)
+    tk.Label(modal, text="Target X, m").grid(row=5, column=0)
+    entry_target_x = tk.Entry(modal)
+    entry_target_x.insert(0, target_x)
+    entry_target_x.grid(row=5, column=1)
 
-axButton_prev = plt.subplot(gs[4, 4:6])
-button_prev = Button(ax=axButton_prev, label="Save track", color=bg_color, hovercolor=hc_color)
+    tk.Label(modal, text="Target height, m").grid(row=6, column=0)
+    entry_target_height = tk.Entry(modal)
+    entry_target_height.insert(0, target_height)
+    entry_target_height.grid(row=6, column=1)
 
-axButton_load = plt.subplot(gs[4, 6:])
-button_load = Button(ax=axButton_load, label="Load track", color=bg_color, hovercolor=hc_color)
+    tk.Label(modal, text="Projectile mass, kg").grid(row=7, column=0)
+    entry_m = tk.Entry(modal)
+    entry_m.insert(0, m)
+    entry_m.grid(row=7, column=1)
 
+    tk.Label(modal, text="Cannon mass, kg").grid(row=8, column=0)
+    entry_M = tk.Entry(modal)
+    entry_M.insert(0, M)
+    entry_M.grid(row=8, column=1)
+
+    tk.Button(modal, text="Submit", command=on_submit).grid(row=9, columnspan=2)
+
+root = tk.Tk()
+root.withdraw()  # Hide the root window
+
+axButton_modal = plt.axes([0.7, 0.02, 0.1, 0.04])
+button_modal = Button(axButton_modal, 'Input Params')
+button_modal.on_clicked(lambda event: open_modal())
+
+axButton_launch = plt.axes([0.8, 0.02, 0.1, 0.04])
+button_launch = Button(axButton_launch, 'Fire')
 button_launch.on_clicked(launch)
-button_prev.on_clicked(update_prev)
 
-# Sliders:
-axSlider_angle = plt.subplot(gs[1, :4])
-slider_angle = Slider(ax=axSlider_angle, label="Angle, °", valmin=1, valmax=89, valinit=45, valstep=1, initcolor=None, color="darkolivegreen",
-                      track_color=hc_color)
+axButton_save_trajectory = plt.axes([0.4, 0.02, 0.1, 0.04])
+button_save_trajectory = Button(axButton_save_trajectory, 'Save Shot')
+button_save_trajectory.on_clicked(save_trajectory)
 
-axSlider_gunpowder = plt.subplot(gs[2, :4])
-slider_gunpowder = Slider(ax=axSlider_gunpowder, label="Gunpowder, g", valmin=10, valmax=100, valstep=10, initcolor=None, color="darkolivegreen",
-                          track_color=hc_color)
+axButton_clear_trajectories = plt.axes([0.3, 0.02, 0.1, 0.04])
+button_clear_trajectories = Button(axButton_clear_trajectories, 'Clear Shots')
+button_clear_trajectories.on_clicked(clear_trajectories)
 
-axSlider_efficiency = plt.subplot(gs[3, :4])
-slider_efficiency = Slider(ax=axSlider_efficiency, label="Efficiency, %", valmin=1, valmax=100, valstep=1, valinit=30,
-                           initcolor=None, color="darkolivegreen", track_color=hc_color)
-
-slider_angle.on_changed(update_angle)
-slider_gunpowder.on_changed(update_gunpowder)
-slider_efficiency.on_changed(update_efficiency)
-
-# Text boxes:
-axTextBox_x_start = plt.subplot(gs[4, :2])
-axTextBox_x_start.set_title("Starting point X", fontsize=12)
-textbox_x_start = TextBox(ax=axTextBox_x_start, label="X, m", initial="0", textalignment="center", color=bg_color,
-                          hovercolor=hc_color)
-
-axTextBox_y_start = plt.subplot(gs[4, 2:4])
-axTextBox_y_start.set_title("Starting point Y", fontsize=12)
-textbox_y_start = TextBox(ax=axTextBox_y_start, label="Y, m", initial="0", textalignment="center", color=bg_color,
-                          hovercolor=hc_color)
-
-axTextBox_target_x = plt.subplot(gs[5, :2])
-axTextBox_target_x.set_title("Target X", fontsize=12)
-textbox_target_x = TextBox(ax=axTextBox_target_x, label="X, m", initial="450", textalignment="center", color=bg_color,
-                           hovercolor=hc_color)
-
-axTextBox_target_height = plt.subplot(gs[5, 2:4])
-axTextBox_target_height.set_title("Target height", fontsize=12)
-textbox_target_height = TextBox(ax=axTextBox_target_height, label="H, m", initial="20", textalignment="center",
-                                color=bg_color, hovercolor=hc_color)
-
-axTextBox_bullet_m = plt.subplot(gs[1, 5:])
-axTextBox_bullet_m.set_title("Projectile mass:", fontsize=12)
-textbox_bullet_m = TextBox(ax=axTextBox_bullet_m, label="m, kg", initial="5", textalignment="center", color=bg_color,
-                           hovercolor=hc_color)
-
-axTextBox_cannon_m = plt.subplot(gs[2, 5:])
-axTextBox_cannon_m.set_title("Cannon mass:", fontsize=12)
-textbox_cannon_m = TextBox(ax=axTextBox_cannon_m, label="M, kg", initial="100", textalignment="center", color=bg_color,
-                           hovercolor=hc_color)
-
-textbox_x_start.on_submit(update_x0)
-textbox_y_start.on_submit(update_y0)
-textbox_target_x.on_submit(update_target_x)
-textbox_target_height.on_submit(update_target_height)
-textbox_bullet_m.on_submit(update_bullet_m)
-textbox_cannon_m.on_submit(update_cannon_m)
+axButton_toggle_air_resistance = plt.axes([0.5, 0.02, 0.1, 0.04])
+button_toggle_air_resistance = Button(axButton_toggle_air_resistance, 'Air Resistance: ON')
+button_toggle_air_resistance.on_clicked(toggle_air_resistance)
 
 plt.subplots_adjust(hspace=1)
 plt.show()
