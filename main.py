@@ -278,8 +278,9 @@ def launch(event):
     stop_animation()  # Stop any existing animation
     hit_check = True
     clear_track()  # This will now re-plot saved trajectories
+    update_config()  # Ensure configuration is updated
     plot_target()
-    plot_bars()
+    plot_bars()  # Plot bars after updating configuration
     run_animation()
     plt.draw()  # Ensure the plot is updated
 

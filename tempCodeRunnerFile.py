@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.widgets import Slider, Button, TextBox
+from matplotlib.widgets import Button
 from matplotlib.animation import FuncAnimation
 import tkinter as tk
 from tkinter import messagebox as mbox
@@ -9,7 +9,7 @@ from tkinter import messagebox as mbox
 # Colors:
 bg_color = "#cbc5b3"
 hc_color = "#cbc5b3"
-main_color_1 = "#71b1d0"
+main_color_1 = "#ff7f0e"
 main_color_2 = "#71b1d0"
 saved_color = "#ff7f0e"  # Color for saved trajectories
 
@@ -17,8 +17,7 @@ plt.style.use('Solarize_Light2')
 
 fig = plt.figure()
 fig.patch.set_facecolor("#d9d3c0")
-fig.suptitle("CannonLab", fontsize=14, fontweight="bold")
-fig.canvas.manager.set_window_title("CannonLab")
+fig.suptitle("Cannon Lab", fontsize=14, fontweight="bold", color = "#ff7f0e")
 
 # Proportions:
 hs = [15/50, 15/50, 5/50, 5/50, 5/50, 5/50]  # Adjusted to make top bars taller
@@ -81,7 +80,7 @@ friction_coef = 0.45
 # Air resistance parameters
 air_density = 1.225  # kg/m^3
 drag_coefficient = 0.47  # dimensionless, spherical projectile
-cross_sectional_area = 0.05  # m^2, example value
+cross_sectional_area = 0.00981  # m^2, example value
 
 # Control for air resistance
 apply_air_resistance = True
@@ -103,16 +102,18 @@ trajectories = []
 anim = None  # Ensuring the animation object is not deleted
 
 def compute_drag_force(v):
+    # Use the global variable for cross-sectional area
+    global air_density, drag_coefficient, cross_sectional_area
     return 0.5 * air_density * v**2 * drag_coefficient * cross_sectional_area
 
-def compute_position_with_drag(t):
-    global x_offset, y_offset, angle, initial_speed, m, g
+def compute_position_with_drag(time):
+    global x_offset, y_offset, angle, initial_speed, m, g, cross_sectional_area
 
     dt = 0.1  # time step
     x, y = x_offset, y_offset
     vx, vy = initial_speed * np.cos(angle), initial_speed * np.sin(angle)
 
-    for _ in np.arange(0, t, dt):
+    for t in np.arange(0, time, dt):
         v = np.sqrt(vx**2 + vy**2)
         if apply_air_resistance:
             drag_force = compute_drag_force(v)
@@ -127,7 +128,7 @@ def compute_position_with_drag(t):
         x += vx * dt
         y += vy * dt
 
-        if y < 0:
+        if y < 0 and np.sin(angle) > 0:
             break
 
     return x, y
@@ -277,8 +278,9 @@ def launch(event):
     stop_animation()  # Stop any existing animation
     hit_check = True
     clear_track()  # This will now re-plot saved trajectories
+    update_config()  # Ensure configuration is updated
     plot_target()
-    plot_bars()
+    plot_bars()  # Plot bars after updating configuration
     run_animation()
     plt.draw()  # Ensure the plot is updated
 
@@ -310,19 +312,21 @@ def open_modal():
     stop_animation()  # Stop any existing animation
 
     def on_submit():
-        global angle_grad, gunpowder, efficiency, x0, y0, target_x, target_height, m, M
+        global angle_grad, gunpowder, efficiency, x0, y0, target_x, target_height, m, M, cross_sectional_area
         try:
-            angle_grad = int(entry_angle.get())
-            gunpowder = int(entry_gunpowder.get())
-            efficiency = int(entry_efficiency.get())
-            x0 = int(entry_x0.get())
-            y0 = int(entry_y0.get())
-            target_x = int(entry_target_x.get())
-            target_height = int(entry_target_height.get())
-            m = int(entry_m.get())
-            M = int(entry_M.get())
+            angle_grad = float(entry_angle.get())
+            gunpowder = float(entry_gunpowder.get())
+            efficiency = float(entry_efficiency.get())
+            x0 = float(entry_x0.get())
+            y0 = float(entry_y0.get())
+            target_x = float(entry_target_x.get())
+            target_height = float(entry_target_height.get())
+            m = float(entry_bullet_m.get())
+            M = float(entry_cannon_m.get())
+            cross_sectional_area = float(entry_cross_sectional_area.get())
         except ValueError:
-            mbox.showerror("Cannon Firing Setup", "Incorrect measure format")
+            mbox.showerror("Invalid Input", "Please enter valid numeric values")
+            return
         modal.destroy()
 
     modal = tk.Toplevel(root)
@@ -330,50 +334,55 @@ def open_modal():
 
     tk.Label(modal, text="Angle, °").grid(row=0, column=0)
     entry_angle = tk.Entry(modal)
-    entry_angle.insert(0, angle_grad)
+    entry_angle.insert(0, str(angle_grad))
     entry_angle.grid(row=0, column=1)
 
     tk.Label(modal, text="Gunpowder, g").grid(row=1, column=0)
     entry_gunpowder = tk.Entry(modal)
-    entry_gunpowder.insert(0, gunpowder)
+    entry_gunpowder.insert(0, str(gunpowder))
     entry_gunpowder.grid(row=1, column=1)
 
     tk.Label(modal, text="Efficiency, %").grid(row=2, column=0)
     entry_efficiency = tk.Entry(modal)
-    entry_efficiency.insert(0, efficiency)
+    entry_efficiency.insert(0, str(efficiency))
     entry_efficiency.grid(row=2, column=1)
 
     tk.Label(modal, text="Starting point X, m").grid(row=3, column=0)
     entry_x0 = tk.Entry(modal)
-    entry_x0.insert(0, x0)
+    entry_x0.insert(0, str(x0))
     entry_x0.grid(row=3, column=1)
 
     tk.Label(modal, text="Starting point Y, m").grid(row=4, column=0)
     entry_y0 = tk.Entry(modal)
-    entry_y0.insert(0, y0)
+    entry_y0.insert(0, str(y0))
     entry_y0.grid(row=4, column=1)
 
     tk.Label(modal, text="Target X, m").grid(row=5, column=0)
     entry_target_x = tk.Entry(modal)
-    entry_target_x.insert(0, target_x)
+    entry_target_x.insert(0, str(target_x))
     entry_target_x.grid(row=5, column=1)
 
     tk.Label(modal, text="Target height, m").grid(row=6, column=0)
     entry_target_height = tk.Entry(modal)
-    entry_target_height.insert(0, target_height)
+    entry_target_height.insert(0, str(target_height))
     entry_target_height.grid(row=6, column=1)
 
     tk.Label(modal, text="Projectile mass, kg").grid(row=7, column=0)
-    entry_m = tk.Entry(modal)
-    entry_m.insert(0, m)
-    entry_m.grid(row=7, column=1)
+    entry_bullet_m = tk.Entry(modal)
+    entry_bullet_m.insert(0, str(m))
+    entry_bullet_m.grid(row=7, column=1)
 
     tk.Label(modal, text="Cannon mass, kg").grid(row=8, column=0)
-    entry_M = tk.Entry(modal)
-    entry_M.insert(0, M)
-    entry_M.grid(row=8, column=1)
+    entry_cannon_m = tk.Entry(modal)
+    entry_cannon_m.insert(0, str(M))
+    entry_cannon_m.grid(row=8, column=1)
 
-    tk.Button(modal, text="Submit", command=on_submit).grid(row=9, columnspan=2)
+    tk.Label(modal, text="Cross-sectional area, m²").grid(row=9, column=0)
+    entry_cross_sectional_area = tk.Entry(modal)
+    entry_cross_sectional_area.insert(0, str(cross_sectional_area))
+    entry_cross_sectional_area.grid(row=9, column=1)
+
+    tk.Button(modal, text="Submit", command=on_submit).grid(row=10, columnspan=2)
 
 root = tk.Tk()
 root.withdraw()  # Hide the root window
